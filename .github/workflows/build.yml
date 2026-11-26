@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    # release tags (v1.0 and so on) also build the Mac app for Intel Macs
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      intel_mac:
+        description: Intel Macs too (the Mac build takes about twice as long)
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+
+      # ---- Linux: a .tar.gz keeps the "can run" permission on the game file
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+          cargo build --release --locked
+          mkdir -p dist
+          tar -czf dist/rogue-ai-linux.tar.gz -C target/release rogue-ai
+
+      # ---- Windows: a plain .exe
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --release --locked
+          mkdir dist
+          copy target\release\rogue-ai.exe dist\rogue-ai.exe
+        shell: cmd
+
+      # ---- macOS: "Rogue AI.app" in a disk image (.dmg): open it and drag
+      # the app into Applications. Test builds are for Apple-chip Macs only,
+      # which takes half the time. Release tags (v1.0 and so on), or a manual
+      # run with "Intel Macs too" ticked, also build for Intel Macs and join
+      # both into one app that runs on either.
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          INTEL: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.intel_mac == true }}
+        run: |
+          APP="dist/Rogue AI.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cargo build --release --locked --target aarch64-apple-darwin
+          if [ "$INTEL" = "true" ]; then
+            cargo build --release --locked --target x86_64-apple-darwin
+            lipo -create -output "$APP/Contents/MacOS/rogue-ai" \
+              target/aarch64-apple-darwin/release/rogue-ai \
+              target/x86_64-apple-darwin/release/rogue-ai
+          else
+            cp target/aarch64-apple-darwin/release/rogue-ai "$APP/Contents/MacOS/rogue-ai"
+          fi
+          cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+          lipo -info "$APP/Contents/MacOS/rogue-ai"
+          ln -s /Applications dist/Applications
+          # hdiutil sometimes fails with "resource busy" on these machines
+          for i in 1 2 3; do
+            hdiutil create -volname "Rogue AI" -srcfolder dist -ov -format UDZO Rogue-AI-macOS.dmg && break
+            sleep 10
+          done
+          hdiutil verify Rogue-AI-macOS.dmg
+          rm -rf dist && mkdir dist && mv Rogue-AI-macOS.dmg dist/
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'macOS'
+        with:
+          name: rogue-ai-${{ matrix.name }}
+          path: dist/*
+
+      # The Mac disk image goes up as it is, not zipped, so the browser
+      # downloads Rogue-AI-macOS.dmg itself (a zip inside a zip wouldn't open
+      # with the Mac's Archive Utility).
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'macOS'
+        with:
+          path: dist/Rogue-AI-macOS.dmg
+          archive: false
