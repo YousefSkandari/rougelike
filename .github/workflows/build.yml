@@ -52,10 +52,11 @@ jobs:
           copy target\release\rogue-ai.exe dist\rogue-ai.exe
         shell: cmd
 
-      # ---- macOS: a double-click "Rogue AI.app". Test builds are for
-      # Apple-chip Macs only, which takes half the time. Release tags (v1.0
-      # and so on), or a manual run with "Intel Macs too" ticked, also build
-      # for Intel Macs and join both into one app that runs on either.
+      # ---- macOS: "Rogue AI.app" in a disk image (.dmg): open it and drag
+      # the app into Applications. Test builds are for Apple-chip Macs only,
+      # which takes half the time. Release tags (v1.0 and so on), or a manual
+      # run with "Intel Macs too" ticked, also build for Intel Macs and join
+      # both into one app that runs on either.
       - name: Build (macOS)
         if: runner.os == 'macOS'
         env:
@@ -75,9 +76,26 @@ jobs:
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
           codesign --force --deep --sign - "$APP"
           lipo -info "$APP/Contents/MacOS/rogue-ai"
-          cd dist && ditto -c -k --keepParent "Rogue AI.app" "Rogue-AI-macOS.zip" && rm -rf "Rogue AI.app"
+          ln -s /Applications dist/Applications
+          # hdiutil sometimes fails with "resource busy" on these machines
+          for i in 1 2 3; do
+            hdiutil create -volname "Rogue AI" -srcfolder dist -ov -format UDZO Rogue-AI-macOS.dmg && break
+            sleep 10
+          done
+          hdiutil verify Rogue-AI-macOS.dmg
+          rm -rf dist && mkdir dist && mv Rogue-AI-macOS.dmg dist/
 
       - uses: actions/upload-artifact@v4
+        if: runner.os != 'macOS'
         with:
           name: rogue-ai-${{ matrix.name }}
           path: dist/*
+
+      # The Mac disk image goes up as it is, not zipped, so the browser
+      # downloads Rogue-AI-macOS.dmg itself (a zip inside a zip wouldn't open
+      # with the Mac's Archive Utility).
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'macOS'
+        with:
+          path: dist/Rogue-AI-macOS.dmg
+          archive: false
