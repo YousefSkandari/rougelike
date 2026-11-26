@@ -3,8 +3,15 @@ name: Build
 on:
   push:
     branches: [main]
+    # release tags (v1.0 and so on) also build the Mac app for Intel Macs
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      intel_mac:
+        description: Intel Macs too (the Mac build takes about twice as long)
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -45,17 +52,26 @@ jobs:
           copy target\release\rogue-ai.exe dist\rogue-ai.exe
         shell: cmd
 
-      # ---- macOS: a double-click "Rogue AI.app" for Apple Silicon and Intel
+      # ---- macOS: a double-click "Rogue AI.app". Test builds are for
+      # Apple-chip Macs only, which takes half the time. Release tags (v1.0
+      # and so on), or a manual run with "Intel Macs too" ticked, also build
+      # for Intel Macs and join both into one app that runs on either.
       - name: Build (macOS)
         if: runner.os == 'macOS'
+        env:
+          INTEL: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.intel_mac == true }}
         run: |
-          cargo build --release --locked --target aarch64-apple-darwin
-          cargo build --release --locked --target x86_64-apple-darwin
           APP="dist/Rogue AI.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          lipo -create -output "$APP/Contents/MacOS/rogue-ai" \
-            target/aarch64-apple-darwin/release/rogue-ai \
-            target/x86_64-apple-darwin/release/rogue-ai
+          cargo build --release --locked --target aarch64-apple-darwin
+          if [ "$INTEL" = "true" ]; then
+            cargo build --release --locked --target x86_64-apple-darwin
+            lipo -create -output "$APP/Contents/MacOS/rogue-ai" \
+              target/aarch64-apple-darwin/release/rogue-ai \
+              target/x86_64-apple-darwin/release/rogue-ai
+          else
+            cp target/aarch64-apple-darwin/release/rogue-ai "$APP/Contents/MacOS/rogue-ai"
+          fi
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
           codesign --force --deep --sign - "$APP"
           lipo -info "$APP/Contents/MacOS/rogue-ai"
