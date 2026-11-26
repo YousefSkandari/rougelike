@@ -47,6 +47,10 @@ You are a rogue AI core loose in the Arctic Vault datacentre. The Botnet Swarm's
 
 ## Downloads
 
-Every push builds the game for Windows, macOS and Linux. Open the **Actions** tab, pick the latest **Build** run, and download from **Artifacts**.
+Every push builds the game for Windows, macOS and Linux. Open the **Actions** tab, pick the latest **Build** run, and download from **Artifacts** (you need to be signed in to GitHub).
+
+- **Mac** (Apple Silicon or Intel): download **rogue-ai-macOS** and double-click it, then double-click **Rogue-AI-macOS.zip** to get the **Rogue AI** app. The first time, macOS will say it can't check the app, because it isn't signed with an Apple developer account yet. Click **Done**, open **System Settings > Privacy & Security**, scroll down and click **Open Anyway** next to Rogue AI. After that it opens with a double-click.
+- **Windows**: download **rogue-ai-Windows**, unzip it and run `rogue-ai.exe`. If SmartScreen warns you, click **More info > Run anyway**.
+- **Linux / Steam Deck desktop mode**: download **rogue-ai-Linux**, unzip it, extract `rogue-ai-linux.tar.gz` and run `./rogue-ai`.
 
 Status: early development. The current build is one playable fight: your AI against the Botnet Swarm.

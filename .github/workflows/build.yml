@@ -15,24 +15,53 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-latest
-            artifact: target/release/rogue-ai
           - name: Windows
             os: windows-latest
-            artifact: target/release/rogue-ai.exe
           - name: macOS
             os: macos-latest
-            artifact: target/release/rogue-ai
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install Linux dependencies
+
+      # ---- Linux: a .tar.gz keeps the "can run" permission on the game file
+      - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-      - name: Build
-        run: cargo build --release --locked
+        run: |
+          sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+          cargo build --release --locked
+          mkdir -p dist
+          tar -czf dist/rogue-ai-linux.tar.gz -C target/release rogue-ai
+
+      # ---- Windows: a plain .exe
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --release --locked
+          mkdir dist
+          copy target\release\rogue-ai.exe dist\rogue-ai.exe
+        shell: cmd
+
+      # ---- macOS: a double-click "Rogue AI.app" for Apple Silicon and Intel
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          APP="dist/Rogue AI.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          lipo -create -output "$APP/Contents/MacOS/rogue-ai" \
+            target/aarch64-apple-darwin/release/rogue-ai \
+            target/x86_64-apple-darwin/release/rogue-ai
+          cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+          lipo -info "$APP/Contents/MacOS/rogue-ai"
+          cd dist && ditto -c -k --keepParent "Rogue AI.app" "Rogue-AI-macOS.zip" && rm -rf "Rogue AI.app"
+
       - uses: actions/upload-artifact@v4
         with:
           name: rogue-ai-${{ matrix.name }}
-          path: ${{ matrix.artifact }}
+          path: dist/*
