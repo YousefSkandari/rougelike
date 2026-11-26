@@ -1,18 +1,20 @@
-//! Rogue AI: a real-time fight in a "3D pixel art" isometric diorama.
+//! Rogue AI: a real-time fight through a server hall, in "3D pixel art".
 //!
-//! The 3D scene renders into a small 384x216 image, which is then scaled up
+//! The 3D scene renders into a small 480x270 image, which is then scaled up
 //! by a whole number with nearest-neighbour filtering. That gives real 3D
 //! lighting, shadows and glow, but with chunky, crisp pixels. The HUD is
 //! drawn pixel by pixel into a second image of the same size on top.
 //!
 //! Environment options:
-//! - `VIEW=angled` for an angled perspective camera instead of isometric.
 //! - `MODEL=swarm` (or language, vision, reasoning, agent) to pick the model.
-//! - `AUTOPLAY=1` lets the game play itself.
+//! - `SEED=7` picks the hall layout (otherwise every fight is new).
+//! - `DEMO=boss` starts at the boss with a few parts already bolted on.
+//! - `AUTOPLAY=1` lets the game play itself (`ORBIT=0.3` turns the camera).
 //! - `SHOT=path.png` plays by itself, saves a screenshot and quits
 //!   (`SHOT_FRAME` picks the frame, default 150).
-//! - `CLIP=folder` plays by itself and saves 90 frames for a short clip.
-//! - `WIN=768x432` sets the window size.
+//! - `CLIP=folder` plays by itself and saves 90 frames for a short clip
+//!   (`CLIP_START` picks the first frame, default 40).
+//! - `WIN=960x540` sets the window size.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::Hdr;
@@ -23,19 +25,37 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use bevy::window::{CursorOptions, PrimaryWindow, WindowResized};
+use bevy::window::{PrimaryWindow, WindowResized};
 
+mod boss;
 mod canvas;
 mod fight;
+mod hall;
 mod hud;
 mod input;
-mod scene;
+mod maze;
+mod mech;
 mod visuals;
 
 use fight::{Family, Fight, Outcome};
 
 /// Size of the low-res render. Everything you see is made of these pixels.
-pub const RES: UVec2 = UVec2::new(384, 216);
+pub const RES: UVec2 = UVec2::new(480, 270);
+
+/// Is the game playing itself (for demos, screenshots and clips)?
+pub fn demo() -> bool {
+    ["AUTOPLAY", "SHOT", "CLIP"]
+        .iter()
+        .any(|v| std::env::var(v).is_ok())
+}
+
+fn new_fight(family: Family) -> Fight {
+    let mut f = Fight::new(family);
+    if std::env::var("DEMO").is_ok_and(|d| d == "boss") {
+        f.skip_to_boss();
+    }
+    f
+}
 
 /// The 3D camera that renders the arena.
 #[derive(Component)]
@@ -67,26 +87,36 @@ fn main() {
             ..default()
         }))
         .insert_resource(ClearColor(Color::BLACK))
-        .insert_resource(Fight::new(family))
+        .insert_resource(new_fight(family))
+        .insert_resource(bevy::light::DirectionalLightShadowMap { size: 2048 })
         .init_resource::<input::Input>()
+        .init_resource::<visuals::CamRig>()
+        .insert_resource(input::Captured(!demo()))
         .add_systems(
             Startup,
-            (setup_cameras, scene::build, visuals::setup).chain(),
+            (
+                setup_cameras,
+                visuals::setup,
+                hall::setup,
+                mech::setup,
+                boss::setup,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
             (
                 fit_to_window,
                 input::read_input,
+                input::cursor_capture,
                 run_fight,
-                (
-                    visuals::sync,
-                    visuals::effects,
-                    visuals::particles,
-                    visuals::camera_shake,
-                ),
+                hall::rebuild,
+                visuals::camera,
+                (hall::cutaway, hall::atmosphere),
+                (mech::sync, boss::sync, visuals::sync),
+                visuals::effects,
+                visuals::particles,
                 hud::draw,
-                scene::animate,
                 screenshot_and_quit,
             )
                 .chain(),
@@ -94,7 +124,7 @@ fn main() {
         .run();
 }
 
-/// Window size: 1920x1080, or `WIN=768x432` for small test captures.
+/// Window size: 1920x1080, or `WIN=960x540` for small test captures.
 fn window_size() -> (u32, u32) {
     std::env::var("WIN")
         .ok()
@@ -113,11 +143,7 @@ pub fn pixel_scale(win: &Window) -> f32 {
         .max(1.0)
 }
 
-fn setup_cameras(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
-) {
+fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let mut image = Image::new_target_texture(RES.x, RES.y, TextureFormat::Rgba8UnormSrgb, None);
     image.sampler = ImageSampler::nearest();
     let handle = images.add(image);
@@ -137,62 +163,43 @@ fn setup_cameras(
     let hud_handle = images.add(hud);
     commands.insert_resource(hud::HudImage(hud_handle.clone()));
 
-    // The game draws its own reticle.
-    if let Ok(mut c) = cursor.single_mut() {
-        c.visible = false;
-    }
-
-    // 3D camera rendering into the small image. Isometric diorama view by
-    // default; VIEW=angled gives an angled perspective instead.
-    let iso = std::env::var("VIEW").map(|v| v != "angled").unwrap_or(true);
-    let (projection, view) = if iso {
-        (
-            Projection::Orthographic(OrthographicProjection {
-                scaling_mode: bevy::camera::ScalingMode::FixedVertical {
-                    viewport_height: 17.0,
-                },
-                ..OrthographicProjection::default_3d()
-            }),
-            Transform::from_xyz(15.0, 15.5, 15.0).looking_at(Vec3::new(-0.5, 0.0, -0.5), Vec3::Y),
-        )
-    } else {
-        (
-            Projection::Perspective(PerspectiveProjection {
-                fov: 34f32.to_radians(),
-                ..default()
-            }),
-            Transform::from_xyz(0.0, 16.0, 15.0).looking_at(Vec3::new(0.0, 0.0, 0.6), Vec3::Y),
-        )
-    };
+    // 3D camera rendering into the small image: an orthographic follow
+    // camera that `visuals::camera` moves every frame.
     commands.spawn((
         Camera3d::default(),
         Camera {
             order: -1,
-            clear_color: ClearColorConfig::Custom(scene::FOG),
+            clear_color: ClearColorConfig::Custom(hall::FOG),
             ..default()
         },
         RenderTarget::from(handle.clone()),
-        projection,
-        view,
-        visuals::CamBase(view),
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::FixedVertical {
+                viewport_height: 14.0,
+            },
+            near: 1.0,
+            far: 140.0,
+            ..OrthographicProjection::default_3d()
+        }),
+        Transform::from_xyz(30.0, 30.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
         GameCamera,
         Msaa::Off,
         Hdr,
         Bloom {
-            intensity: 0.22,
+            intensity: 0.25,
             ..Bloom::NATURAL
         },
         DistanceFog {
-            color: scene::FOG,
+            color: hall::FOG,
             falloff: FogFalloff::Linear {
-                start: 22.0,
-                end: 42.0,
+                start: 45.0,
+                end: 60.0,
             },
             ..default()
         },
         AmbientLight {
-            color: Color::srgb(0.55, 0.65, 1.0),
-            brightness: 90.0,
+            color: Color::srgb(0.5, 0.6, 1.0),
+            brightness: 70.0,
             ..default()
         },
     ));
@@ -237,7 +244,7 @@ fn fit_to_window(
 fn run_fight(mut fight: ResMut<Fight>, inp: Res<input::Input>, time: Res<Time>) {
     if inp.restart {
         let fam = fight.family;
-        *fight = Fight::new(fam);
+        *fight = new_fight(fam);
         return;
     }
     if fight.outcome != Outcome::Playing && inp.cycle_model {
@@ -258,8 +265,12 @@ fn screenshot_and_quit(
     let f = *frame;
     // CLIP=dir saves every other frame for a short clip, then quits.
     if let Ok(dir) = std::env::var("CLIP") {
-        let (start, count) = (40, 90);
-        if f >= start && f < start + count * 2 && (f - start) % 2 == 0 {
+        let start = std::env::var("CLIP_START")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(40);
+        let count = 90;
+        if f >= start && f < start + count * 2 && (f - start).is_multiple_of(2) {
             let path = format!("{dir}/frame_{:04}.png", (f - start) / 2);
             commands
                 .spawn(Screenshot::primary_window())
