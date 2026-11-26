@@ -1,0 +1,18 @@
+[package]
+name = "rogue-ai"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.20"
+
+# Optimise dependencies even in debug builds, so the game runs smoothly while developing.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
