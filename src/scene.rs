@@ -4,9 +4,6 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 pub const FOG: Color = Color::srgb(0.025, 0.035, 0.065);
 
-const PLAYER_POS: Vec3 = Vec3::new(-4.5, 0.65, 0.8);
-const NODE_POS: Vec3 = Vec3::new(8.2, 1.0, 0.6);
-
 #[derive(Component)]
 pub struct Blink {
     on: Handle<StandardMaterial>,
@@ -16,42 +13,9 @@ pub struct Blink {
 }
 
 #[derive(Component)]
-pub struct Spin(Vec3);
+pub struct Spin(pub Vec3);
 
-#[derive(Component)]
-pub struct Bob {
-    base: f32,
-    amp: f32,
-    speed: f32,
-    phase: f32,
-}
-
-#[derive(Component)]
-pub struct Orbit {
-    center: Vec3,
-    radius: f32,
-    speed: f32,
-    phase: f32,
-}
-
-#[derive(Component)]
-pub struct Shot {
-    from: Vec3,
-    to: Vec3,
-    speed: f32,
-    phase: f32,
-}
-
-#[derive(Component)]
-pub struct Bot;
-
-#[derive(Component)]
-pub struct NodeLight;
-
-#[derive(Component)]
-pub struct Flicker;
-
-fn emissive(mats: &mut Assets<StandardMaterial>, c: LinearRgba) -> Handle<StandardMaterial> {
+pub fn emissive(mats: &mut Assets<StandardMaterial>, c: LinearRgba) -> Handle<StandardMaterial> {
     mats.add(StandardMaterial {
         base_color: Color::BLACK,
         emissive: c,
@@ -59,7 +23,11 @@ fn emissive(mats: &mut Assets<StandardMaterial>, c: LinearRgba) -> Handle<Standa
     })
 }
 
-fn metal(mats: &mut Assets<StandardMaterial>, c: Color, rough: f32) -> Handle<StandardMaterial> {
+pub fn metal(
+    mats: &mut Assets<StandardMaterial>,
+    c: Color,
+    rough: f32,
+) -> Handle<StandardMaterial> {
     mats.add(StandardMaterial {
         base_color: c,
         perceptual_roughness: rough,
@@ -265,229 +233,6 @@ pub fn build(
         spawn_rack(&mut commands, Vec3::new(x, 0.0, z), 0.0, 1.6);
     }
 
-    // ---------------------------------------------------------------- the player: your rogue AI core
-    let core = emissive(&mut mats, LinearRgba::rgb(0.6, 6.0, 1.8));
-    let shell = mats.add(StandardMaterial {
-        base_color: Color::srgba(0.3, 1.0, 0.55, 0.25),
-        emissive: LinearRgba::rgb(0.05, 0.6, 0.2),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    let ring = emissive(&mut mats, LinearRgba::rgb(0.3, 3.0, 1.0));
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.28))),
-        MeshMaterial3d(core),
-        Transform::from_translation(PLAYER_POS),
-        Bob {
-            base: PLAYER_POS.y,
-            amp: 0.08,
-            speed: 3.0,
-            phase: 0.0,
-        },
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.46))),
-        MeshMaterial3d(shell),
-        Transform::from_translation(PLAYER_POS),
-        Bob {
-            base: PLAYER_POS.y,
-            amp: 0.08,
-            speed: 3.0,
-            phase: 0.0,
-        },
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Torus::new(0.62, 0.7))),
-        MeshMaterial3d(ring),
-        Transform::from_translation(PLAYER_POS).with_rotation(Quat::from_rotation_x(0.5)),
-        Spin(Vec3::new(0.0, 2.5, 0.0)),
-    ));
-    commands.spawn((
-        PointLight {
-            color: Color::srgb(0.3, 1.0, 0.5),
-            intensity: 220_000.0,
-            range: 9.0,
-            ..default()
-        },
-        Transform::from_translation(PLAYER_POS + Vec3::Y * 0.6),
-    ));
-    let drone = emissive(&mut mats, LinearRgba::rgb(4.0, 0.4, 0.6));
-    let drone_mesh = meshes.add(Cuboid::new(0.16, 0.16, 0.16));
-    for k in 0..3 {
-        commands.spawn((
-            Mesh3d(drone_mesh.clone()),
-            MeshMaterial3d(drone.clone()),
-            Transform::from_translation(PLAYER_POS),
-            Orbit {
-                center: PLAYER_POS,
-                radius: 1.0,
-                speed: 2.4,
-                phase: k as f32 * TAU / 3.0,
-            },
-            Spin(Vec3::new(3.0, 2.0, 0.0)),
-        ));
-    }
-
-    // ---------------------------------------------------------------- the threat: Botnet Swarm
-    let bot_body = metal(&mut mats, Color::srgb(0.3, 0.32, 0.38), 0.4);
-    let red_eye = emissive(&mut mats, LinearRgba::rgb(6.0, 0.3, 0.5));
-    let dark = metal(&mut mats, Color::srgb(0.05, 0.05, 0.07), 0.6);
-    // command node
-    commands
-        .spawn((
-            Mesh3d(meshes.add(Cuboid::new(1.4, 1.2, 1.2))),
-            MeshMaterial3d(metal(&mut mats, Color::srgb(0.2, 0.2, 0.25), 0.3)),
-            Transform::from_translation(NODE_POS)
-                .looking_at(PLAYER_POS.with_y(NODE_POS.y), Vec3::Y),
-            Bob {
-                base: NODE_POS.y,
-                amp: 0.15,
-                speed: 1.6,
-                phase: 1.0,
-            },
-        ))
-        .with_children(|p| {
-            for x in [-0.32f32, 0.32] {
-                p.spawn((
-                    Mesh3d(meshes.add(Cuboid::new(0.3, 0.26, 0.05))),
-                    MeshMaterial3d(red_eye.clone()),
-                    Transform::from_xyz(x, 0.12, -0.61),
-                ));
-            }
-            p.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.7, 0.06, 0.05))),
-                MeshMaterial3d(dark.clone()),
-                Transform::from_xyz(0.0, -0.28, -0.61),
-            ));
-            p.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.04, 0.6))),
-                MeshMaterial3d(dark.clone()),
-                Transform::from_xyz(0.0, 0.85, 0.0),
-            ));
-            p.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.09))),
-                MeshMaterial3d(red_eye.clone()),
-                Transform::from_xyz(0.0, 1.18, 0.0),
-            ));
-        });
-    commands.spawn((
-        Mesh3d(meshes.add(Torus::new(1.35, 1.45))),
-        MeshMaterial3d(emissive(&mut mats, LinearRgba::rgb(3.0, 0.15, 0.3))),
-        Transform::from_translation(NODE_POS.with_y(0.03)),
-        Spin(Vec3::new(0.0, -0.8, 0.0)),
-    ));
-    commands.spawn((
-        PointLight {
-            color: Color::srgb(1.0, 0.2, 0.3),
-            intensity: 300_000.0,
-            range: 10.0,
-            ..default()
-        },
-        Transform::from_translation(NODE_POS + Vec3::Y * 1.2),
-        NodeLight,
-    ));
-    // bots
-    let bot_mesh = meshes.add(Cuboid::new(0.44, 0.3, 0.44));
-    let glow_mesh = meshes.add(Cylinder::new(0.45, 0.01));
-    let glow = mats.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.15, 0.25, 0.35),
-        alpha_mode: AlphaMode::Add,
-        unlit: true,
-        ..default()
-    });
-    let eye_mesh = meshes.add(Cuboid::new(0.09, 0.08, 0.04));
-    let ant_mesh = meshes.add(Cylinder::new(0.02, 0.2));
-    let bots = [
-        (4.6, -1.6),
-        (5.6, 0.6),
-        (3.8, 1.9),
-        (6.4, 2.8),
-        (2.2, -0.4),
-        (1.0, 1.6),
-        (5.2, -3.0),
-        (-0.6, -1.4),
-        (7.0, -1.2),
-        (3.0, 3.4),
-    ];
-    for (i, (x, z)) in bots.iter().enumerate() {
-        let pos = Vec3::new(*x, 0.4, *z);
-        commands
-            .spawn((
-                Mesh3d(bot_mesh.clone()),
-                MeshMaterial3d(bot_body.clone()),
-                Transform::from_translation(pos).looking_at(PLAYER_POS.with_y(0.4), Vec3::Y),
-                Bob {
-                    base: 0.4,
-                    amp: 0.07,
-                    speed: 4.0,
-                    phase: i as f32,
-                },
-                Bot,
-            ))
-            .with_children(|p| {
-                for ex in [-0.1f32, 0.1] {
-                    p.spawn((
-                        Mesh3d(eye_mesh.clone()),
-                        MeshMaterial3d(red_eye.clone()),
-                        Transform::from_xyz(ex, 0.03, -0.23),
-                    ));
-                }
-                p.spawn((
-                    Mesh3d(ant_mesh.clone()),
-                    MeshMaterial3d(dark.clone()),
-                    Transform::from_xyz(0.0, 0.25, 0.0),
-                ));
-                p.spawn((
-                    Mesh3d(glow_mesh.clone()),
-                    MeshMaterial3d(glow.clone()),
-                    Transform::from_xyz(0.0, -0.33, 0.0),
-                ));
-            });
-    }
-
-    // ---------------------------------------------------------------- shots and a beam
-    let green_shot = emissive(&mut mats, LinearRgba::rgb(0.8, 8.0, 2.2));
-    let red_shot = emissive(&mut mats, LinearRgba::rgb(8.0, 0.5, 0.8));
-    let shot_mesh = meshes.add(Sphere::new(0.09));
-    for k in 0..6 {
-        let (bx, bz) = bots[k % 4];
-        commands.spawn((
-            Mesh3d(shot_mesh.clone()),
-            MeshMaterial3d(green_shot.clone()),
-            Transform::from_translation(PLAYER_POS),
-            Shot {
-                from: PLAYER_POS,
-                to: Vec3::new(bx, 0.55, bz),
-                speed: 1.3,
-                phase: k as f32 / 6.0,
-            },
-        ));
-    }
-    for k in 0..3 {
-        let a = -0.25 + k as f32 * 0.25;
-        let dir = Quat::from_rotation_y(a) * (PLAYER_POS - NODE_POS).with_y(0.0).normalize();
-        commands.spawn((
-            Mesh3d(shot_mesh.clone()),
-            MeshMaterial3d(red_shot.clone()),
-            Transform::from_translation(NODE_POS),
-            Shot {
-                from: NODE_POS.with_y(0.7),
-                to: NODE_POS.with_y(0.7) + dir * 11.0,
-                speed: 0.35,
-                phase: k as f32 * 0.1,
-            },
-        ));
-    }
-    let beam_from = PLAYER_POS;
-    let beam_to = Vec3::new(4.6, 0.55, -1.6);
-    let len = beam_from.distance(beam_to);
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.07, 0.07, len))),
-        MeshMaterial3d(emissive(&mut mats, LinearRgba::rgb(7.0, 7.0, 7.5))),
-        Transform::from_translation((beam_from + beam_to) / 2.0).looking_at(beam_to, Vec3::Y),
-        Flicker,
-    ));
-
     // ---------------------------------------------------------------- set dressing
     // hazard stripes around the fighting area
     let yellow = metal(&mut mats, Color::srgb(0.95, 0.72, 0.15), 0.6);
@@ -561,15 +306,6 @@ pub fn build(
             t.with_translation(mid - t.right() * 0.1),
         ));
     }
-    // pools of light on the floor under the ceiling lamps
-    let pool = mats.add(StandardMaterial {
-        base_color: Color::srgba(0.4, 0.9, 1.0, 0.025),
-        emissive: LinearRgba::rgb(0.0, 0.0, 0.0),
-        alpha_mode: AlphaMode::Add,
-        unlit: true,
-        ..default()
-    });
-    let _ = pool;
     // warm accents: warning lights and supply crates
     let amber = emissive(&mut mats, LinearRgba::rgb(4.0, 1.4, 0.2));
     for (x, z) in [
@@ -640,13 +376,7 @@ pub fn build(
 pub fn animate(
     time: Res<Time>,
     mut blinks: Query<(&Blink, &mut MeshMaterial3d<StandardMaterial>)>,
-    mut spins: Query<(&Spin, &mut Transform), (Without<Bob>, Without<Orbit>, Without<Shot>)>,
-    mut orbits: Query<(&Orbit, &mut Transform), (Without<Bob>, Without<Shot>)>,
-    mut shots: Query<(&Shot, &mut Transform), (Without<Bob>, Without<Spin>, Without<Orbit>)>,
-    mut lights: Query<&mut PointLight, With<NodeLight>>,
-    mut beams: Query<&mut Visibility, With<Flicker>>,
-    bots: Query<&GlobalTransform, With<Bot>>,
-    mut gizmos: Gizmos,
+    mut spins: Query<(&Spin, &mut Transform)>,
 ) {
     let t = time.elapsed_secs();
     for (b, mut m) in &mut blinks {
@@ -656,50 +386,13 @@ pub fn animate(
             m.0 = want.clone();
         }
     }
+    let dt = time.delta_secs();
     for (s, mut tr) in &mut spins {
         tr.rotate(Quat::from_euler(
             EulerRot::XYZ,
-            s.0.x * time.delta_secs(),
-            s.0.y * time.delta_secs(),
-            s.0.z * time.delta_secs(),
+            s.0.x * dt,
+            s.0.y * dt,
+            s.0.z * dt,
         ));
-    }
-    for (o, mut tr) in &mut orbits {
-        let a = t * o.speed + o.phase;
-        tr.translation = o.center
-            + Vec3::new(
-                a.cos() * o.radius,
-                0.1 * (a * 2.0).sin(),
-                a.sin() * o.radius,
-            );
-        tr.rotate_y(time.delta_secs() * 3.0);
-    }
-    for (s, mut tr) in &mut shots {
-        let f = (t * s.speed + s.phase).fract();
-        tr.translation = s.from.lerp(s.to, f);
-    }
-    for mut l in &mut lights {
-        l.intensity = 260_000.0 + 80_000.0 * (t * 4.0).sin();
-    }
-    for mut v in &mut beams {
-        *v = if (t * 9.0).sin() > -0.8 {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-    for g in &bots {
-        gizmos.line(
-            g.translation(),
-            NODE_POS,
-            Color::srgba(0.5, 0.05, 0.12, 0.45),
-        );
-    }
-}
-
-pub fn bob(time: Res<Time>, mut q: Query<(&Bob, &mut Transform)>) {
-    let t = time.elapsed_secs();
-    for (b, mut tr) in &mut q {
-        tr.translation.y = b.base + b.amp * (t * b.speed + b.phase).sin();
     }
 }
